@@ -5,6 +5,7 @@ from sqlalchemy.exc import OperationalError
 
 from flask.ext.babel import lazy_gettext
 from flask.globals import current_app
+from sqlalchemy.event import listen
 from werkzeug.local import LocalProxy
 
 from .schema import db
@@ -12,6 +13,11 @@ from .schema import db
 
 import logging
 logger = logging.getLogger(__name__)
+
+
+def set_timeouts(dbapi_connection, connection_record):
+    with dbapi_connection.cursor() as cursor:
+        cursor.execute("SET lock_wait_timeout=%s", (2,))
 
 
 def init_db(app):
@@ -35,22 +41,7 @@ def init_db(app):
     db.init_app(app)
     for bind in [None, 'traffic']:
         engine = db.get_engine(app, bind=bind)
-        try:
-            conn = engine.connect()
-        except OperationalError:
-            logger.error(
-                # the password in the engine repr is replaced by '***'
-                "Connect to engine %s failed", engine,
-                extra={'data': {
-                    'engine': engine,
-                    'bind': bind,
-                }},
-            )
-        else:
-            # If an exception got cought, `conn` does not exist
-            # thus it cannot be closed in a `finally` clause
-            conn.execute("SET lock_wait_timeout=%s", (2,))
-            conn.close()
+        listen(engine.pool, "connect", set_timeouts)
 
     app.extensions['db_helios'] = create_engine(
         'mysql+pymysql://{0}:{1}@{2}:{3}/'.format(
